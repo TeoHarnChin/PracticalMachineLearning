@@ -1,0 +1,166 @@
+---
+title: 'Practical Machine Learning: Course Project'
+output:
+  html_document:
+    keep_md: no
+  pdf_document: default
+  word_document: default
+---
+Author: Ken Teo
+
+## Executive Summary
+This report describes a machine learning exercise to build a prediction model to predict the form of barbell lifts. In this project, the objective is to make use of the data provided in pml-training.csv (https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv) to build and train a prediction model to correctly classify the form of the of a barbell lift based predictor data provided in pml-testing.csv (https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv).
+In the data, the form of barbell lifts is classified into 5 categories, Class A to Class E, representing lifting according to specification and 4 types of common mistakes respectively. Specifically, exactly according to the specification (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E). Addition details regarding the data can be found at online (http://groupware.les.inf.puc-rio.br/har). 
+
+## Background
+The goal of the project is to predict the manner in which the exercise is performed. This prediction outcome is the "classe" variable in the training set. The rest of the variables are candidates that can be used to predict the result. This report describe how the model is built, how cross validation is used, the expected out of sample error, and the reasons for the choices made. The prediction model built is then used to predict 20 different test cases. 
+
+## Results 
+
+### Loading required libraries and data
+```{r Load, cache=TRUE, message = F}
+library(caret)
+
+## Set multicore for faster processing
+library(cluster)
+library(parallel)
+library(doSNOW)
+coreNumber=max(detectCores(),1)
+cluster=makeCluster(coreNumber, type = "SOCK",outfile="")
+registerDoSNOW(cluster)
+
+## Read data
+trainData.raw <- read.csv("./pml-training.csv");
+testData.raw <- read.csv("./pml-testing.csv");
+
+```
+
+### Cleaning Data
+The data is cleaned according to the description described in Appendix 1: Cleaning Data.
+```{r Clean, cache = TRUE, message = F}
+## Subsetting data
+required_cols <- c(8:11, 37:49, 60:68, 84:86, 102, 113:124, 140, 151:160)
+trainData.sub <- trainData.raw[,required_cols]
+testData.sub <- testData.raw[,required_cols]
+```
+
+### Model 
+Based on the assessment described in Appendix 2 : Method Selection, the method that is selected to train the model for prediction is random forest (rf). The method chosen for training control is cross validation (cv).  
+
+```{r rf Model, cache = TRUE, message = F}
+set.seed(125)
+
+### Define settings for train control 
+fitControl <- trainControl(method = "cv", number = 5, repeats = 1)
+
+### Train Model
+modfit <- train(as.factor(classe)~., method = "rf", data = trainData.sub, preProcess = "knnImpute", trControl = fitControl, tuneLength = 1)
+
+### Out of Sample Error
+train_pred <- predict(modfit, trainData.sub)
+CM <- confusionMatrix(train_pred, trainData.sub$classe)
+accuracy <- CM$overall[1]
+```
+``` {r out of sample error, cache = TRUE, message = F}
+error <- 1 - accuracy
+```
+The accuracy rate of the model of this model is `r accuracy` and the expected out of sample error rate is hence `r error` (i.e. 1 - accuracy). Accuracy rate of 1 is the best accuracy rate that can be achieved by any model.
+
+### Prediction Results
+The prediction model is then used to classify the data in the testing dataset.
+
+```{r Predict, cache = TRUE, message = F}
+test_pred <- as.character(predict(modfit, testData.sub))
+```
+The results obtained using the model are `r test_pred`.
+
+## Appendix 1 : Cleaning Data
+A number of columns in the raw dataset is identified to be ommitted based on visual inspection. 
+```{r Raw Data Summary, cache = TRUE, message = F}
+rawTrain.summary <- summary(trainData.raw); rawTrain.summary;
+rawTest.summary <- summary(testData.raw); rawTest.summary;
+no.remain_cols <- length(required_cols)
+remain_cols <- names(trainData.raw)[required_cols]
+removed_cols <- names(trainData.raw)[-required_cols]
+```
+It is immediately obvious that a number of data columns can be removed based on inspection on raw dataset provided for testing (i.e. those with data columns predominantly NA values). This can further be compared against the dataset provided for training. In addition, the seven columns in the raw dataset for training (Index, User Name, Time Information and Window Information) is also interpreted to be unsuitable as predictors. The number of columns remaining in the dataset that will be used to create the model are `r no.remain_cols`
+
+Data columns from the raw dataset that were removed are hence:
+
+`r removed_cols`
+
+Data columns from the raw dataset that were allowed to remain for model building are hence:
+
+`r remain_cols`
+
+## Appendix 2 : Method Selection 
+Using a small sample size of 5000, a number of models were build using different training methods (qda, lda, rf, treebag) to assess the suitability of respective methods.
+
+```{r Method Selection, cache = TRUE, message = F}
+set.seed(125)
+trainData.subSample <- trainData.sub[sample(1: nrow(trainData.sub), size = 5000),]
+
+## qda model
+set.seed(125)
+qda_modfit <- train(as.factor(classe)~., method = "qda", data = trainData.subSample, preProcess = "knnImpute", tuneLength = 1)
+train_pred.qdaSample <- predict(qda_modfit, trainData.subSample)
+train_pred.qda <- predict(qda_modfit, trainData.sub)
+result.qdaSample <- table(train_pred.qdaSample, trainData.subSample$classe)
+result.qda <- table(train_pred.qda, trainData.sub$classe)
+result1 <- result.qdaSample;
+misclassification1 <- result1[1,2] + result1[1,3] + result1[1,4] + result1[1,5] + result1[2,1] + result1[2,3] + result1[2,4] + result1[2,5] + result1[3,1] + result1[3,2] + result1[3,4] + result1[3,5] + result1[4,1] + result1[4,2] + result1[4,3] + result1[1,5] + result1[5,1] + result1[5,2] + result1[5,3] + result1[5,4]
+train_misclassification.qdaSample <- misclassification1 / (misclassification1 + result1[1,1] + result1[2,2] + result1[3,3] + result1[4,4] + result1[5,5]); train_misclassification.qdaSample  
+result1 <- result.qda;
+misclassification1 <- result1[1,2] + result1[1,3] + result1[1,4] + result1[1,5] + result1[2,1] + result1[2,3] + result1[2,4] + result1[2,5] + result1[3,1] + result1[3,2] + result1[3,4] + result1[3,5] + result1[4,1] + result1[4,2] + result1[4,3] + result1[1,5] + result1[5,1] + result1[5,2] + result1[5,3] + result1[5,4]
+train_misclassification.qda <- misclassification1 / (misclassification1 + result1[1,1] + result1[2,2] + result1[3,3] + result1[4,4] + result1[5,5]); train_misclassification.qda  
+
+## lda model
+set.seed(125)
+lda_modfit <- train(as.factor(classe)~., method = "lda", data = trainData.subSample, preProcess = "knnImpute", tuneLength = 1)
+train_pred.ldaSample <- predict(lda_modfit, trainData.subSample)
+train_pred.lda <- predict(lda_modfit, trainData.sub)
+result.ldaSample <- table(train_pred.ldaSample, trainData.subSample$classe)
+result.lda <- table(train_pred.lda, trainData.sub$classe)
+result1 <- result.ldaSample;
+misclassification1 <- result1[1,2] + result1[1,3] + result1[1,4] + result1[1,5] + result1[2,1] + result1[2,3] + result1[2,4] + result1[2,5] + result1[3,1] + result1[3,2] + result1[3,4] + result1[3,5] + result1[4,1] + result1[4,2] + result1[4,3] + result1[1,5] + result1[5,1] + result1[5,2] + result1[5,3] + result1[5,4]
+train_misclassification.ldaSample <- misclassification1 / (misclassification1 + result1[1,1] + result1[2,2] + result1[3,3] + result1[4,4] + result1[5,5]); train_misclassification.ldaSample  
+result1 <- result.lda;
+misclassification1 <- result1[1,2] + result1[1,3] + result1[1,4] + result1[1,5] + result1[2,1] + result1[2,3] + result1[2,4] + result1[2,5] + result1[3,1] + result1[3,2] + result1[3,4] + result1[3,5] + result1[4,1] + result1[4,2] + result1[4,3] + result1[1,5] + result1[5,1] + result1[5,2] + result1[5,3] + result1[5,4]
+train_misclassification.lda <- misclassification1 / (misclassification1 + result1[1,1] + result1[2,2] + result1[3,3] + result1[4,4] + result1[5,5]); train_misclassification.lda  
+
+## random forest
+set.seed(125)
+rf_modfit <- train(as.factor(classe)~., method = "rf", data = trainData.subSample, preProcess = "knnImpute", tuneLength = 1)
+train_pred.rfSample <- predict(rf_modfit, trainData.subSample)
+train_pred.rf <- predict(rf_modfit, trainData.sub)
+result.rfSample <- table(train_pred.rfSample, trainData.subSample$classe)
+result.rf <- table(train_pred.rf, trainData.sub$classe)
+result1 <- result.rfSample;
+misclassification1 <- result1[1,2] + result1[1,3] + result1[1,4] + result1[1,5] + result1[2,1] + result1[2,3] + result1[2,4] + result1[2,5] + result1[3,1] + result1[3,2] + result1[3,4] + result1[3,5] + result1[4,1] + result1[4,2] + result1[4,3] + result1[1,5] + result1[5,1] + result1[5,2] + result1[5,3] + result1[5,4]
+train_misclassification.rfSample <- misclassification1 / (misclassification1 + result1[1,1] + result1[2,2] + result1[3,3] + result1[4,4] + result1[5,5]); train_misclassification.rfSample  
+result1 <- result.rf;
+misclassification1 <- result1[1,2] + result1[1,3] + result1[1,4] + result1[1,5] + result1[2,1] + result1[2,3] + result1[2,4] + result1[2,5] + result1[3,1] + result1[3,2] + result1[3,4] + result1[3,5] + result1[4,1] + result1[4,2] + result1[4,3] + result1[1,5] + result1[5,1] + result1[5,2] + result1[5,3] + result1[5,4]
+train_misclassification.rf <- misclassification1 / (misclassification1 + result1[1,1] + result1[2,2] + result1[3,3] + result1[4,4] + result1[5,5]); train_misclassification.rf  
+
+## treebag
+set.seed(125)
+pca_modfit <- train(as.factor(classe)~., method = "treebag", data = trainData.subSample, preProcess = "knnImpute", tuneLength = 1)
+train_pred.pcaSample <- predict(pca_modfit, trainData.subSample)
+train_pred.pca <- predict(pca_modfit, trainData.sub)
+result.pcaSample <- table(train_pred.pcaSample, trainData.subSample$classe)
+result.pca <- table(train_pred.pca, trainData.sub$classe)
+result1 <- result.pcaSample;
+misclassification1 <- result1[1,2] + result1[1,3] + result1[1,4] + result1[1,5] + result1[2,1] + result1[2,3] + result1[2,4] + result1[2,5] + result1[3,1] + result1[3,2] + result1[3,4] + result1[3,5] + result1[4,1] + result1[4,2] + result1[4,3] + result1[1,5] + result1[5,1] + result1[5,2] + result1[5,3] + result1[5,4]
+train_misclassification.treebagSample <- misclassification1 / (misclassification1 + result1[1,1] + result1[2,2] + result1[3,3] + result1[4,4] + result1[5,5]); train_misclassification.treebagSample  
+result1 <- result.pca;
+misclassification1 <- result1[1,2] + result1[1,3] + result1[1,4] + result1[1,5] + result1[2,1] + result1[2,3] + result1[2,4] + result1[2,5] + result1[3,1] + result1[3,2] + result1[3,4] + result1[3,5] + result1[4,1] + result1[4,2] + result1[4,3] + result1[1,5] + result1[5,1] + result1[5,2] + result1[5,3] + result1[5,4]
+train_misclassification.treebag <- misclassification1 / (misclassification1 + result1[1,1] + result1[2,2] + result1[3,3] + result1[4,4] + result1[5,5]); train_misclassification.treebag  
+
+```
+
+Based on these preliminary assessment results, random forest (rf) method seems like a promising approach that provide very high accuracy. Using the model trained using random forest and based on 5000 sampled records from the dataset for training, the misclassification rate based on sampled records and the full dataset for training are `r train_misclassification.rfSample` and `r train_misclassification.rf` respectively. Altenatively, bagging using treebag is likely also a suitable alternative training method that can be considered if required.
+
+## Citation
+1) Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013. 
+
+Read more: http://groupware.les.inf.puc-rio.br/har#dataset#ixzz3V5faBx6E
